@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: test-config
+  namespace: test
+data:
+  REDIS_DB: "0"
+  REDIS_HOST: "redis-service"
+  # REDIS_PASSWORD: "pw"
+  REDIS_PORT: "6379"
+  # REDIS_TLS: "true"
+  STREAM_NAME: "TEST_MESSAGES"
+  CONSUMER_GROUP_NAME: "TEST_GROUP"
+  PROCESS_TIME_MEAN: "1.60"
+  PROCESS_TIME_VARIANCE: "1"
+  CONSUMER_PER_CYCLE_FAILUIRE_CHANCE: "0.01"

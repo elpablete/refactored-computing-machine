@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-service
+  namespace: test
+  labels:
+    app: redis-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis-service
+  template:
+    metadata:
+      labels:
+        app: redis-service
+    spec:
+      containers:
+        - name: redis-service
+          image: redis:6.2.5
+          resources:
+            requests:
+              cpu: 5m
+              memory: 100Mi
+            limits:
+              cpu: 75m
+              memory: 512Mi
+          ports:
+            - containerPort: 6379
