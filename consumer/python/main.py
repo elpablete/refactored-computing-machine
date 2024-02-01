@@ -92,48 +92,75 @@ def main():
     logger.debug(
         f"Consuming from stream: {settings.STREAM_NAME} as {settings.CONSUMER_NAME} in group {settings.CONSUMER_GROUP_NAME}"
     )
-    max_id_seen = RedisSpecialId.FIRST_ID_INSIDE_THE_STREAM
+    latest_pending_msg_id = RedisSpecialId.FIRST_ID_INSIDE_THE_STREAM
 
     while True:
+        ##################################################################################
+        ## system failure section
+        #################################################################################
+        if random.random() < settings.CONSUMER_PER_CYCLE_FAILUIRE_CHANCE:
+            logger.error("Consumer failed")
+            sys.exit()
+
+        #################################################################################
+        ## new messages section
+        #################################################################################
+        while True:
+            logger.info(
+                f"Polling for new messages 'XREADGROUP {RedisSpecialId.NEVER_DELIVERED_TO_OTHER_CONSUMERS_SO_FAR}'"
+            )
+            xreadgroup_response = redis_client.xreadgroup(
+                settings.CONSUMER_GROUP_NAME,
+                settings.CONSUMER_NAME,
+                {
+                    settings.STREAM_NAME: RedisSpecialId.NEVER_DELIVERED_TO_OTHER_CONSUMERS_SO_FAR
+                },
+                count=settings.CONSUMER_MESSAGE_BATCH_SIZE,
+            )
+            if len(xreadgroup_response) > 0:
+                my_new_work_list = xreadgroup_response[0][1]
+                logger.info(f"Processing new messages: {len(my_new_work_list)}")
+                process_messages(
+                    my_new_work_list, redis_client
+                )  # todo: make this a yield
+            else:
+                logger.info("No new messages")
+                break  # break out of the new messages loop
+
+        #################################################################################
+        ## pending messages section
         #################################################################################
         logger.info(
-            f"Polling for new messages 'XREADGROUP {RedisSpecialId.NEVER_DELIVERED_TO_OTHER_CONSUMERS_SO_FAR}'"
+            f"Polling for pending messages 'XREADGROUP {latest_pending_msg_id}'"
         )
-        xreadgroup_response = redis_client.xreadgroup(
-            settings.CONSUMER_GROUP_NAME,
-            settings.CONSUMER_NAME,
-            {
-                settings.STREAM_NAME: RedisSpecialId.NEVER_DELIVERED_TO_OTHER_CONSUMERS_SO_FAR
-            },
-            count=settings.CONSUMER_MESSAGE_BATCH_SIZE,
-        )
-        if len(xreadgroup_response) > 0:
-            my_new_work_list = xreadgroup_response[0][1]
-            logger.info(f"Processing new messages: {len(my_new_work_list)}")
-            process_messages(my_new_work_list, redis_client)
-        else:
-            logger.info("No new messages")
-
-        #################################################################################
-        logger.info(f"Polling for pending messages 'XREADGROUP {max_id_seen}'")
 
         xreadgroup_response = redis_client.xreadgroup(
             settings.CONSUMER_GROUP_NAME,
             settings.CONSUMER_NAME,
-            {settings.STREAM_NAME: max_id_seen},
+            {settings.STREAM_NAME: latest_pending_msg_id},
             count=settings.CONSUMER_MESSAGE_BATCH_SIZE,
         )
         if len(xreadgroup_response) > 0:
             my_pending_work_list = xreadgroup_response[0][1]
+            last_msg_in_pending_batch_id = my_pending_work_list[-1][0]
+            latest_pending_msg_id = last_msg_in_pending_batch_id
             logger.info(f"Processing pending messages: {len(my_pending_work_list)}")
-            process_messages(my_pending_work_list, redis_client)
+            process_messages(
+                my_pending_work_list, redis_client
+            )  # todo: make this a yield
         else:
+            # claim messages that are pending for than min_idle_milliseconds in this CONSUMER_GROUP
             logger.info("No pending messages")
-
-        ##################################################################################
-        if random.random() < settings.CONSUMER_PER_CYCLE_FAILUIRE_CHANCE:
-            logger.error("Consumer failed")
-            sys.exit()
+            latest_pending_msg_id = RedisSpecialId.FIRST_ID_INSIDE_THE_STREAM
+            logger.info("Claiming pending messages")
+            redis_client.xautoclaim(
+                settings.STREAM_NAME,
+                settings.CONSUMER_GROUP_NAME,
+                settings.CONSUMER_NAME,
+                settings.CLAIM_AFTER_IDLE_MILLISECONDS,
+                RedisSpecialId.FIRST_ID_INSIDE_THE_STREAM,
+                settings.CONSUMER_MESSAGE_BATCH_SIZE,
+            )
 
 
 if __name__ == "__main__":
