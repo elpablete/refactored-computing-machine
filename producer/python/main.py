@@ -31,7 +31,10 @@ def produce_message():
 
 def publish_message(message: Message, persistance_dependency: redis.Redis):
     logger.info(f"Publish message: {message}")
-    persistance_dependency.xadd(settings.STREAM_NAME, message.model_dump(mode="json"))
+    message_id = persistance_dependency.xadd(
+        settings.STREAM_NAME, message.model_dump(mode="json")
+    )
+    return message_id
 
 
 def main():
@@ -44,12 +47,14 @@ def main():
     redis_client.ping()
 
     logger.debug(f"Publish to stream: {settings.STREAM_NAME}")
-
-    while True:
-        #################################################################################
-        logger.info("Publish message")
-        message = produce_message()
-        publish_message(message, redis_client)
+    with open("db.txt", "w") as f:
+        while True:
+            #################################################################################
+            logger.info("Publish message")
+            message = produce_message()
+            msg_id = publish_message(message, redis_client)
+            f.write(f"{msg_id},{message.tx_id}\n")
+            f.flush()
 
 
 if __name__ == "__main__":

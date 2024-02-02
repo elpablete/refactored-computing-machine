@@ -1,3 +1,6 @@
 pydantic
 pydantic-settings
 redis
+ruff
+typing_extensions
+mypy

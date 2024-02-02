@@ -27,12 +27,11 @@ def main():
         decode_responses=True,
     )
     redis_client.ping()
+    # with open("db.txt", "w") as d:
+    #     for k in redis_client.xrange(settings.STREAM_NAME):
+    #         d.write(f"{k[0]},{k[1]['tx_id']}\n")
 
-    with open("keys.txt", "w") as f:
-        for k in redis_client.xrange(settings.STREAM_NAME):
-            f.write(f"{k[0]},{k[1]['tx_id']}\n")
-
-    with open("keys.txt", "r") as s, open("db.txt", "w") as d:
+    with open("db.txt", "r") as s, open("result.txt", "w") as d:
         for line in s:
             # key = line.split(",")[0]
             tx_id = line.split(",")[1].strip()
