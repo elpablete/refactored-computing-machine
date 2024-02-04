@@ -27,7 +27,7 @@ class Settings(pydantic_settings.BaseSettings):
 
 
 settings = Settings()
-settings.CONSUMER_NAME = f"{settings.CONSUMER_NAME}-{uuid.uuid4()}"
+settings.CONSUMER_NAME = f"{settings.CONSUMER_NAME}-{uuid.uuid4().hex[:8]}"
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(settings.CONSUMER_NAME)
@@ -78,8 +78,9 @@ def main() -> None:
         name=settings.CONSUMER_NAME,
         batch_size=10,
         claim_batch_size=10,
-        # block_milliseconds=5 * 1_000,
-        min_milliseconds_to_claim_idle=5 * 1_000,
+        block_milliseconds=1 * 1_000,
+        min_milliseconds_to_claim_idle=5 * 60 * 1_000,
+        message_class=Message,
     )
     logger.info(f"consumer: {consumer}")
 

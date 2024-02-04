@@ -1,6 +1,6 @@
 import enum
 import logging
-from typing import Generator, TypeVar
+from typing import Any, Type, TypeVar
 
 import redis
 from typing_extensions import Self
@@ -23,6 +23,7 @@ class RedSumer:
         group: str,
         name: str,
         *,
+        message_class: Type[T] | None = None,
         start_group_since_id: str = RedisSpecialId.FIRST_ID_INSIDE_THE_STREAM,
         block_milliseconds: int | None = None,
         batch_size: int | None = None,
@@ -37,9 +38,10 @@ class RedSumer:
         self.latest_pending_msg_id = RedisSpecialId.FIRST_ID_INSIDE_THE_STREAM
         self.block = block_milliseconds
         self.batch_size = batch_size
-        self.pending_batch_size = pending_batch_size or self.batch_size
-        self.claim_batch_size = claim_batch_size or self.pending_batch_size
+        self.pending_batch_size = pending_batch_size
+        self.claim_batch_size = claim_batch_size
         self.min_milliseconds_to_claim_idle = min_milliseconds_to_claim_idle
+        self.message_class = message_class
 
         # check connection
         self.client.ping()
@@ -82,30 +84,101 @@ class RedSumer:
         else:
             return False
 
-    def consume(self) -> Generator[list[tuple[str, T]], None, None]:
+    def consume(self) -> list[tuple[str, T]]:
         return next(self)
+
+    def _parse_messages(self, messages: list[tuple[str, Any]]) -> list[tuple[str, T]]:
+        if len(messages) == 0:
+            return []
+        if self.message_class is None:
+            return messages
+        else:
+            logger.debug(f"Parsing messages as {self.message_class}")
+            return [(msg_id, self.message_class(**msg)) for msg_id, msg in messages]
+
+    def new_messages(self: Self) -> list[tuple[str, Any]]:
+        xreadgroup_response = self.client.xreadgroup(
+            groupname=self.group,
+            consumername=self.name,
+            streams={
+                self.stream: RedisSpecialId.NEVER_DELIVERED_TO_OTHER_CONSUMERS_SO_FAR
+            },
+            count=self.batch_size,
+            block=self.block,
+        )
+        if len(xreadgroup_response) > 0:
+            my_new_work = xreadgroup_response[0][1]
+        else:
+            my_new_work = []
+
+        for stream_name, messages in xreadgroup_response:
+            logger.info(f"Stream: {stream_name}, messages: {len(messages)}")
+            if stream_name == self.stream:
+                my_new_work = messages
+                break
+            else:
+                logger.warning(
+                    f"Unexpected stream: {stream_name}, messages: {len(messages)}"
+                )
+        else:
+            my_new_work = []
+
+        return self._parse_messages(my_new_work)
+
+    def pending_messages(self: Self) -> list[tuple[str, Any]]:
+        xreadgroup_response = self.client.xreadgroup(
+            groupname=self.group,
+            consumername=self.name,
+            streams={self.stream: self.latest_pending_msg_id},
+            count=self.pending_batch_size,
+            block=self.block,
+        )
+
+        for stream_name, messages in xreadgroup_response:
+            logger.info(f"Stream: {stream_name}, messages: {len(messages)}")
+            if stream_name == self.stream:
+                my_pending_work = messages
+                if len(my_pending_work) > 0:
+                    last_msg_in_pending_batch_id = my_pending_work[-1][0]
+                    self.latest_pending_msg_id = last_msg_in_pending_batch_id
+                else:
+                    self.latest_pending_msg_id = (
+                        RedisSpecialId.FIRST_ID_INSIDE_THE_STREAM
+                    )
+                break
+            else:
+                logger.warning(
+                    f"Unexpected stream: {stream_name}, messages: {len(messages)}"
+                )
+        else:
+            my_pending_work = []
+            self.latest_pending_msg_id = RedisSpecialId.FIRST_ID_INSIDE_THE_STREAM
+
+        return self._parse_messages(my_pending_work)
+
+    def claimed_messages(self: Self) -> list[tuple[str, Any]]:
+        # claim messages that are pending for than min_idle_milliseconds in this CONSUMER_GROUP
+        autoclaim_response = self.client.xautoclaim(
+            name=self.stream,
+            groupname=self.group,
+            consumername=self.name,
+            min_idle_time=self.min_milliseconds_to_claim_idle,
+            start_id=RedisSpecialId.FIRST_ID_INSIDE_THE_STREAM,
+            count=self.claim_batch_size,
+        )
+        _, claimed_messages, _ = autoclaim_response
+
+        return self._parse_messages(claimed_messages)
 
     def __next__(self: Self) -> list[tuple[str, T]]:
         while True:
             #################################################################################
             ## new messages section
             #################################################################################
+            logger.info("Polling for new messages")
             while True:
-                logger.info("Polling for new messages")
-                xreadgroup_response = self.client.xreadgroup(
-                    groupname=self.group,
-                    consumername=self.name,
-                    streams={
-                        self.stream: RedisSpecialId.NEVER_DELIVERED_TO_OTHER_CONSUMERS_SO_FAR
-                    },
-                    count=self.batch_size,
-                    block=self.block,
-                )
-                if len(xreadgroup_response) > 0:
-                    my_new_work: list[tuple[str, T]] = xreadgroup_response[0][1]
-                else:
-                    my_new_work = []
-
+                # exhaust new messages
+                my_new_work = self.new_messages()
                 if len(my_new_work) > 0:
                     logger.info(f"Yielding new messages: {len(my_new_work)}")
                     yield my_new_work
@@ -116,45 +189,36 @@ class RedSumer:
             #################################################################################
             ## pending messages section
             #################################################################################
-            logger.info("Polling for pending messages")
 
-            xreadgroup_response = self.client.xreadgroup(
-                groupname=self.group,
-                consumername=self.name,
-                streams={self.stream: self.latest_pending_msg_id},
-                count=self.pending_batch_size,
-                block=self.block,
-            )
-
-            if len(xreadgroup_response) > 0:
-                my_pending_work: list[tuple[str, T]] = xreadgroup_response[0][1]
-            else:
+            if self.pending_batch_size is None:
+                logger.info("Skipping my pending messages")
                 my_pending_work = []
-
-            if len(my_pending_work) > 0:
-                last_msg_in_pending_batch_id = my_pending_work[-1][0]
-                self.latest_pending_msg_id = last_msg_in_pending_batch_id
-                logger.info(f"Yielding pending messages: {len(my_pending_work)}")
-                yield my_pending_work
             else:
-                # claim messages that are pending for than min_idle_milliseconds in this CONSUMER_GROUP
-                logger.info("No pending messages")
-                self.latest_pending_msg_id = RedisSpecialId.FIRST_ID_INSIDE_THE_STREAM
-                logger.info("Claiming pending messages")
-                autoclaim_response = self.client.xautoclaim(
-                    name=self.stream,
-                    groupname=self.group,
-                    consumername=self.name,
-                    min_idle_time=self.min_milliseconds_to_claim_idle,
-                    start_id=RedisSpecialId.FIRST_ID_INSIDE_THE_STREAM,
-                    count=self.claim_batch_size,
-                    justid=True,
-                )
-                if len(autoclaim_response) > 0:
-                    total_claimed = len(autoclaim_response)
-                    logger.info(f"Claimed {total_claimed} messages")
+                logger.info("Cheking for my pending messages")
+                my_pending_work = self.pending_messages()
+                if len(my_pending_work) > 0:
+                    logger.info(f"Yielding my pending messages: {len(my_pending_work)}")
+                    yield my_pending_work
+                else:
+                    logger.info("No my pending messages")
+
+            #################################################################################
+            ## claimed messages section
+            #################################################################################
+            if self.claim_batch_size is None:
+                logger.info("Skip claiming group messages")
+                claimed_messages = []
+            else:
+                logger.info("Claiming pending group messages")
+                claimed_messages = self.claimed_messages()
+                if len(claimed_messages) > 0:
+                    logger.info(f"Yielding claimed {len(claimed_messages)} messages")
+                    yield claimed_messages
                 else:
                     logger.info(
-                        f"No idle messages in consumer group '{self.group}' of stream '{self.stream}'"
+                        f"No messages idle for more than {self.min_milliseconds_to_claim_idle} milliseconds"
+                        f" in consumer group '{self.group}'"
+                        f" of stream '{self.stream}'"
                     )
-                continue
+
+            continue
