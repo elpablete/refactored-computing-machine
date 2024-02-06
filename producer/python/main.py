@@ -8,9 +8,9 @@ import redis
 
 class Settings(pydantic_settings.BaseSettings):
     REDIS_DB: int = 0
-    REDIS_HOST: str = "redis-service"
+    REDIS_HOST: str
     REDIS_PASSWORD: str
-    REDIS_PORT: int = 6379
+    REDIS_PORT: int
     # REDIS_TLS: "true"
     STREAM_NAME: str
 
@@ -34,10 +34,11 @@ def publish_message(message: Message, persistance_dependency: redis.Redis):
     message_id = persistance_dependency.xadd(
         settings.STREAM_NAME, message.model_dump(mode="json")
     )
+    persistance_dependency.set(str(message.tx_id), 0)
     return message_id
 
 
-def main():
+def main(count: int):
     redis_client = redis.Redis(
         host=settings.REDIS_HOST,
         port=settings.REDIS_PORT,
@@ -47,15 +48,12 @@ def main():
     redis_client.ping()
 
     logger.debug(f"Publish to stream: {settings.STREAM_NAME}")
-    with open("db.txt", "w") as f:
-        while True:
-            #################################################################################
-            logger.info("Publish message")
-            message = produce_message()
-            msg_id = publish_message(message, redis_client)
-            f.write(f"{msg_id},{message.tx_id}\n")
-            f.flush()
+    for i in range(count):
+        #################################################################################
+        logger.info("Publish message")
+        message = produce_message()
+        _ = publish_message(message, redis_client)
 
 
 if __name__ == "__main__":
-    main()
+    main(1_000)
