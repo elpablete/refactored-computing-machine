@@ -17,6 +17,10 @@ class ConsumerSettings(pydantic_settings.BaseSettings):
     GROUP_NAME: str
     NAME: str
     MESSAGE_BATCH_SIZE: int
+    CLAIM_BATCH_SIZE: int | None = None
+    MIN_MILLISECONDS_TO_CLAIM_IDLE: int | None = None
+    BLOCK_MILLISECONDS: int | None = None
+    PENDING_BATCH_SIZE: int | None = None
 
 
 class TestSettings(pydantic_settings.BaseSettings):
@@ -96,10 +100,11 @@ def main() -> None:
         stream=settings.consumer.STREAM_NAME,
         group=settings.consumer.GROUP_NAME,
         name=settings.consumer.NAME,
-        batch_size=10,
-        claim_batch_size=10,
-        block_milliseconds=1 * 1_000,
-        min_milliseconds_to_claim_idle=5 * 60 * 1_000,
+        batch_size=settings.consumer.MESSAGE_BATCH_SIZE,
+        claim_batch_size=settings.consumer.CLAIM_BATCH_SIZE,
+        pending_batch_size=settings.consumer.PENDING_BATCH_SIZE,
+        block_milliseconds=settings.consumer.BLOCK_MILLISECONDS,
+        min_milliseconds_to_claim_idle=settings.consumer.MIN_MILLISECONDS_TO_CLAIM_IDLE,
         message_class=Message,
     )
     logger.info(f"consumer: {consumer}")

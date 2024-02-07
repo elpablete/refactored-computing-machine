@@ -65,7 +65,12 @@ class Consumer:
         return self
 
     def __str__(self) -> str:
-        return f"Redis Consumer from host: {self.client}, stream '{self.stream}', in consumer group '{self.group}' as '{self.name}'"
+        return (
+            f"Redis Stream Consumer from host: {self.client},"
+            " stream '{self.stream}',"
+            " in consumer group '{self.group}'"
+            " as '{self.name}'"
+        )
 
     def ack(self: Self, message_id: str) -> None:
         self.client.xack(self.stream, self.group, message_id)
