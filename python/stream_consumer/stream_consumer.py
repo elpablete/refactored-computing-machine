@@ -15,7 +15,7 @@ class RedisSpecialId(str, enum.Enum):
     FIRST_ID_INSIDE_THE_STREAM = "0-0"
 
 
-class RedSumer:
+class Consumer:
     def __init__(
         self,
         client: redis.Redis,

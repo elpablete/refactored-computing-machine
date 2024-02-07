@@ -1,18 +1,30 @@
 import logging
+import pathlib
 import uuid
 
 import pydantic
 import pydantic_settings
 import redis
+import rtoml
+
+
+class ProducerSettings(pydantic_settings.BaseSettings):
+    STREAM_NAME: str
+
+
+class RedisSettings(pydantic_settings.BaseSettings):
+    model_config = pydantic_settings.SettingsConfigDict(env_prefix="REDIS_")
+    DB: int = 0
+    HOST: str
+    PASSWORD: pydantic.SecretStr
+    PORT: int
 
 
 class Settings(pydantic_settings.BaseSettings):
-    REDIS_DB: int = 0
-    REDIS_HOST: str
-    REDIS_PASSWORD: str
-    REDIS_PORT: int
-    # REDIS_TLS: "true"
-    STREAM_NAME: str
+    redis: RedisSettings = RedisSettings()
+    producer: ProducerSettings = ProducerSettings(
+        **rtoml.load(pathlib.Path("test.toml")).get("producer", {})
+    )
 
 
 settings = Settings()

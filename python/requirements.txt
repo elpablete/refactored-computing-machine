@@ -4,3 +4,4 @@ redis
 ruff
 typing_extensions
 mypy
+rtoml

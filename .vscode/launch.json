@@ -16,15 +16,15 @@
             "name": "Python Debugger: producer",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/producer/python/main.py",
+            "program": "${workspaceFolder}/producer/python/producer.py",
             "console": "integratedTerminal",
             "envFile": "${workspaceFolder}/test.env"
         },
         {
-            "name": "Python Debugger: redsumer",
+            "name": "Python Debugger: consumer",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/python/main.py",
+            "program": "${workspaceFolder}/python/consumer.py",
             "console": "integratedTerminal",
             "envFile": "${workspaceFolder}/test.env"
         }

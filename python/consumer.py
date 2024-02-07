@@ -1,4 +1,5 @@
 import logging
+import pathlib
 import random
 import sys
 import time
@@ -7,30 +8,47 @@ import uuid
 import pydantic
 import pydantic_settings
 import redis
-import redsumer
+import rtoml
+import stream_consumer
 
 
-class Settings(pydantic_settings.BaseSettings):
-    REDIS_DB: int = 0
-    REDIS_HOST: str = "redis-service"
-    REDIS_PASSWORD: str
-    REDIS_PORT: int = 6379
-    # REDIS_TLS: "true"
+class ConsumerSettings(pydantic_settings.BaseSettings):
     STREAM_NAME: str
-    CONSUMER_GROUP_NAME: str
-    CONSUMER_NAME: str
-    CONSUMER_MESSAGE_BATCH_SIZE: int
+    GROUP_NAME: str
+    NAME: str
+    MESSAGE_BATCH_SIZE: int
+
+
+class TestSettings(pydantic_settings.BaseSettings):
     PROCESS_TIME_MEAN: float
     PROCESS_TIME_VARIANCE: float
     PROCESS_FAILURE_CHANCE: float
     CONSUMER_PER_CYCLE_FAILUIRE_CHANCE: float
 
 
+class RedisSettings(pydantic_settings.BaseSettings):
+    model_config = pydantic_settings.SettingsConfigDict(env_prefix="REDIS_")
+    DB: int = 0
+    HOST: str
+    PASSWORD: pydantic.SecretStr
+    PORT: int
+
+
+class Settings(pydantic_settings.BaseSettings):
+    redis: RedisSettings = RedisSettings()
+    consumer: ConsumerSettings = ConsumerSettings(
+        **rtoml.load(pathlib.Path("test.toml")).get("consumer", {})
+    )
+    test: TestSettings = TestSettings(
+        **rtoml.load(pathlib.Path("test.toml")).get("test", {})
+    )
+
+
 settings = Settings()
-settings.CONSUMER_NAME = f"{settings.CONSUMER_NAME}-{uuid.uuid4().hex[:8]}"
+settings.consumer.NAME = f"{settings.consumer.NAME}-{uuid.uuid4().hex[:8]}"
 
 logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger(settings.CONSUMER_NAME)
+logger = logging.getLogger(settings.consumer.NAME)
 
 
 class Message(pydantic.BaseModel):
@@ -40,10 +58,10 @@ class Message(pydantic.BaseModel):
 def process_message(message: Message, persistance_dependency: redis.Redis):
     logger.info(f"Processing message: {message}")
     process_time_in_seconds = random.lognormvariate(
-        settings.PROCESS_TIME_MEAN, settings.PROCESS_TIME_VARIANCE
+        settings.test.PROCESS_TIME_MEAN, settings.test.PROCESS_TIME_VARIANCE
     )
     time.sleep(process_time_in_seconds)
-    if random.random() < settings.PROCESS_FAILURE_CHANCE:
+    if random.random() < settings.test.PROCESS_FAILURE_CHANCE:
         raise Exception("Processing failed")
     else:
         persistance_dependency.incr(str(message.tx_id))
@@ -51,31 +69,33 @@ def process_message(message: Message, persistance_dependency: redis.Redis):
 
 def main() -> None:
     redis_client = redis.Redis(
-        host=settings.REDIS_HOST,
-        port=settings.REDIS_PORT,
-        password=settings.REDIS_PASSWORD,
+        host=settings.redis.HOST,
+        port=settings.redis.PORT,
+        password=settings.redis.PASSWORD.get_secret_value(),
         decode_responses=True,
     )
     redis_client.ping()
 
     try:
         redis_client.xgroup_create(
-            settings.STREAM_NAME, settings.CONSUMER_GROUP_NAME, id="0-0"
+            settings.consumer.STREAM_NAME, settings.consumer.GROUP_NAME, id="0-0"
         )
     except redis.exceptions.ResponseError as e:
         if "BUSYGROUP" in str(e):
-            logger.info(f"Consumer group {settings.CONSUMER_GROUP_NAME} already exists")
+            logger.info(f"Consumer group {settings.consumer.GROUP_NAME} already exists")
         else:
             raise e
 
     logger.debug(
-        f"Consuming from stream: {settings.STREAM_NAME} as {settings.CONSUMER_NAME} in group {settings.CONSUMER_GROUP_NAME}"
+        f"Consuming from stream: {settings.consumer.STREAM_NAME}"
+        " as {settings.consumer.NAME}"
+        " in group {settings.consumer.GROUP_NAME}"
     )
-    consumer = redsumer.RedSumer(
+    consumer = stream_consumer.Consumer(
         client=redis_client,
-        stream=settings.STREAM_NAME,
-        group=settings.CONSUMER_GROUP_NAME,
-        name=settings.CONSUMER_NAME,
+        stream=settings.consumer.STREAM_NAME,
+        group=settings.consumer.GROUP_NAME,
+        name=settings.consumer.NAME,
         batch_size=10,
         claim_batch_size=10,
         block_milliseconds=1 * 1_000,
@@ -88,7 +108,7 @@ def main() -> None:
         ##################################################################################
         ## system failure section
         #################################################################################
-        if random.random() < settings.CONSUMER_PER_CYCLE_FAILUIRE_CHANCE:
+        if random.random() < settings.test.CONSUMER_PER_CYCLE_FAILUIRE_CHANCE:
             logger.error("Consumer failed")
             sys.exit()
 
