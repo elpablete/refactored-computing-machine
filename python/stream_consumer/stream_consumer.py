@@ -1,6 +1,6 @@
 import enum
 import logging
-from typing import Any, Type, TypeVar
+from typing import Any, Iterator, Type, TypeVar
 
 import redis
 from typing_extensions import Self
@@ -52,7 +52,7 @@ class Consumer:
             self.client.xgroup_create(
                 self.stream,
                 groupname=self.group,
-                id=0,  # start_group_since_id,
+                id=start_group_since_id,
             )
         except redis.exceptions.ResponseError as e:
             if "BUSYGROUP" in str(e):
@@ -67,9 +67,9 @@ class Consumer:
     def __str__(self) -> str:
         return (
             f"Redis Stream Consumer from host: {self.client},"
-            " stream '{self.stream}',"
-            " in consumer group '{self.group}'"
-            " as '{self.name}'"
+            f" stream '{self.stream}',"
+            f" in consumer group '{self.group}'"
+            f" as '{self.name}'"
         )
 
     def ack(self: Self, message_id: str) -> None:
@@ -175,21 +175,20 @@ class Consumer:
 
         return self._parse_messages(claimed_messages)
 
-    def __next__(self: Self) -> list[tuple[str, T]]:
+    def __next__(self: Self) -> Iterator[list[tuple[str, T]]]:
         while True:
             #################################################################################
             ## new messages section
             #################################################################################
             logger.info("Polling for new messages")
-            while True:
-                # exhaust new messages
-                my_new_work = self.new_messages()
-                if len(my_new_work) > 0:
-                    logger.info(f"Yielding new messages: {len(my_new_work)}")
-                    yield my_new_work
-                else:
-                    logger.info("No new messages")
-                    break  # break out of the new messages loop
+            my_new_work = self.new_messages()
+            if len(my_new_work) > 0:
+                logger.info(f"Yielding new messages: {len(my_new_work)}")
+                yield my_new_work
+                continue
+            else:
+                logger.info("No new messages")
+                pass  # continue with next section
 
             #################################################################################
             ## pending messages section
@@ -197,33 +196,41 @@ class Consumer:
 
             if self.pending_batch_size is None:
                 logger.info("Skipping my pending messages")
-                my_pending_work = []
+                pass  # continue with next section
             else:
                 logger.info("Cheking for my pending messages")
                 my_pending_work = self.pending_messages()
                 if len(my_pending_work) > 0:
                     logger.info(f"Yielding my pending messages: {len(my_pending_work)}")
                     yield my_pending_work
+                    continue
                 else:
                     logger.info("No my pending messages")
+                    pass  # continue with next section
 
             #################################################################################
             ## claimed messages section
             #################################################################################
             if self.claim_batch_size is None:
                 logger.info("Skip claiming group messages")
-                claimed_messages = []
+                pass  # continue with next section
             else:
                 logger.info("Claiming pending group messages")
                 claimed_messages = self.claimed_messages()
                 if len(claimed_messages) > 0:
                     logger.info(f"Yielding claimed {len(claimed_messages)} messages")
                     yield claimed_messages
+                    continue
                 else:
                     logger.info(
                         f"No messages idle for more than {self.min_milliseconds_to_claim_idle} milliseconds"
                         f" in consumer group '{self.group}'"
                         f" of stream '{self.stream}'"
                     )
+                    pass  # continue with next section
 
+            #################################################################################
+            ## no messages section
+            #################################################################################
+            yield []
             continue
