@@ -92,8 +92,8 @@ def main() -> None:
 
     logger.debug(
         f"Consuming from stream: {settings.consumer.STREAM_NAME}"
-        " as {settings.consumer.NAME}"
-        " in group {settings.consumer.GROUP_NAME}"
+        f" as {settings.consumer.NAME}"
+        f" in group {settings.consumer.GROUP_NAME}"
     )
     consumer = stream_consumer.Consumer(
         client=redis_client,

@@ -1,6 +1,6 @@
 import enum
 import logging
-from typing import Any, Iterator, Type, TypeVar
+from typing import Any, Generic, Iterator, Type, TypeVar
 
 import redis
 from typing_extensions import Self
@@ -15,7 +15,7 @@ class RedisSpecialId(str, enum.Enum):
     FIRST_ID_INSIDE_THE_STREAM = "0-0"
 
 
-class Consumer:
+class Consumer(Generic[T]):
     def __init__(
         self,
         client: redis.Redis,
@@ -29,7 +29,7 @@ class Consumer:
         batch_size: int | None = None,
         pending_batch_size: int | None = None,
         claim_batch_size: int | None = None,
-        min_milliseconds_to_claim_idle: int = 1_000,
+        min_milliseconds_to_claim_idle: int | None = None,
     ) -> None:
         self.client = client
         self.stream = stream
@@ -40,7 +40,8 @@ class Consumer:
         self.batch_size = batch_size
         self.pending_batch_size = pending_batch_size
         self.claim_batch_size = claim_batch_size
-        self.min_milliseconds_to_claim_idle = min_milliseconds_to_claim_idle
+        if min_milliseconds_to_claim_idle is None:
+            self.min_milliseconds_to_claim_idle = 1_000
         self.message_class = message_class
 
         # check connection
@@ -89,10 +90,10 @@ class Consumer:
         else:
             return False
 
-    def consume(self) -> list[tuple[str, T]]:
+    def consume(self):
         return next(self)
 
-    def _parse_messages(self, messages: list[tuple[str, Any]]) -> list[tuple[str, T]]:
+    def _parse_messages(self, messages: list[tuple[str, T]]) -> list[tuple[str, T]]:
         if len(messages) == 0:
             return []
         if self.message_class is None:
@@ -130,7 +131,7 @@ class Consumer:
 
         return self._parse_messages(my_new_work)
 
-    def pending_messages(self: Self) -> list[tuple[str, Any]]:
+    def pending_messages(self: Self) -> list[tuple[str, T]]:
         xreadgroup_response = self.client.xreadgroup(
             groupname=self.group,
             consumername=self.name,
@@ -161,7 +162,7 @@ class Consumer:
 
         return self._parse_messages(my_pending_work)
 
-    def claimed_messages(self: Self) -> list[tuple[str, Any]]:
+    def claimed_messages(self: Self) -> list[tuple[str, T]]:
         # claim messages that are pending for than min_idle_milliseconds in this CONSUMER_GROUP
         autoclaim_response = self.client.xautoclaim(
             name=self.stream,
