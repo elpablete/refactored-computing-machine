@@ -11,10 +11,16 @@ import (
 
 func main() {
 	// Redis client configuration
+	redisPort := os.Getenv("REDIS_PORT")
+	rp, err := strconv.Atoi(redisPort)
+	if err != nil {
+		panic(err)
+	}
 	redisArgs := streamConsumer.RedisArgs{
-		RedisHost: "localhost",
-		RedisPort: 6379,
-		Db:        0,
+		RedisHost:     os.Getenv("REDIS_HOST"),
+		RedisPort:     rp,
+		RedisPassword: os.Getenv("REDIS_PASSWORD"),
+		Db:            0,
 	}
 
 	claimBatchSize := os.Getenv("CLAIM_BATCH_SIZE")
@@ -29,7 +35,7 @@ func main() {
 		panic(err)
 	}
 
-	batchSize := os.Getenv("MESSAGE_BATCH_SIZE")
+	batchSize := os.Getenv("CONSUMER_MESSAGE_BATCH_SIZE")
 	bs, err := strconv.ParseInt(batchSize, 10, 64)
 	if err != nil {
 		panic(err)
@@ -50,8 +56,8 @@ func main() {
 	consumerArgs := streamConsumer.ConsumerArgs{
 		// stream, group and consumer names
 		StreamName:   os.Getenv("STREAM_NAME"),
-		GroupName:    os.Getenv("GROUP_NAME"),
-		ConsumerName: os.Getenv("NAME"),
+		GroupName:    os.Getenv("CONSUMER_GROUP_NAME"),
+		ConsumerName: os.Getenv("CONSUMER_NAME"),
 		// batch of messages to new messages
 		BatchSize: bs,
 		// batch of messages to claim, if is nil, it will dont claim messages
