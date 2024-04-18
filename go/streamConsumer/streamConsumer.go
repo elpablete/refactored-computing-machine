@@ -1,4 +1,4 @@
-package stream_consumer
+package streamConsumer
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	redis "github.com/redis/go-redis/v9"
+	"github.com/redis/go-redis/v9"
 )
 
 type RedisArgs struct {
