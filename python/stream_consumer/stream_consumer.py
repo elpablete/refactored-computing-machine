@@ -169,10 +169,11 @@ class Consumer(Generic[T]):
             groupname=self.group,
             consumername=self.name,
             min_idle_time=self.min_milliseconds_to_claim_idle,
-            start_id=RedisSpecialId.FIRST_ID_INSIDE_THE_STREAM,
+            start_id=self.latest_pending_msg_id,
             count=self.claim_batch_size,
         )
-        _, claimed_messages, _ = autoclaim_response
+        last_msg_in_pending_batch_id, claimed_messages, _ = autoclaim_response
+        self.latest_pending_msg_id = last_msg_in_pending_batch_id
 
         return self._parse_messages(claimed_messages)
 

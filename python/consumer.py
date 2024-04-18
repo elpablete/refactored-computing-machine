@@ -1,5 +1,4 @@
 import logging
-import pathlib
 import random
 import sys
 import time
@@ -8,15 +7,14 @@ import uuid
 import pydantic
 import pydantic_settings
 import redis
-import rtoml
 import stream_consumer
 
 
 class ConsumerSettings(pydantic_settings.BaseSettings):
     STREAM_NAME: str
-    GROUP_NAME: str
-    NAME: str
-    MESSAGE_BATCH_SIZE: int
+    CONSUMER_GROUP_NAME: str
+    CONSUMER_NAME: str
+    CONSUMER_MESSAGE_BATCH_SIZE: int
     CLAIM_BATCH_SIZE: int | None = None
     MIN_MILLISECONDS_TO_CLAIM_IDLE: int | None = None
     BLOCK_MILLISECONDS: int | None = None
@@ -41,18 +39,20 @@ class RedisSettings(pydantic_settings.BaseSettings):
 class Settings(pydantic_settings.BaseSettings):
     redis: RedisSettings = RedisSettings()
     consumer: ConsumerSettings = ConsumerSettings(
-        **rtoml.load(pathlib.Path("test.toml")).get("consumer", {})
+        # **rtoml.load(pathlib.Path("test.toml")).get("consumer", {})
     )
     test: TestSettings = TestSettings(
-        **rtoml.load(pathlib.Path("test.toml")).get("test", {})
+        # **rtoml.load(pathlib.Path("test.toml")).get("test", {})
     )
 
 
 settings = Settings()
-settings.consumer.NAME = f"{settings.consumer.NAME}-{uuid.uuid4().hex[:8]}"
+settings.consumer.CONSUMER_NAME = (
+    f"{settings.consumer.CONSUMER_NAME}-{uuid.uuid4().hex[:8]}"
+)
 
 logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger(settings.consumer.NAME)
+logger = logging.getLogger(settings.consumer.CONSUMER_NAME)
 
 
 class Message(pydantic.BaseModel):
@@ -82,25 +82,29 @@ def main() -> None:
 
     try:
         redis_client.xgroup_create(
-            settings.consumer.STREAM_NAME, settings.consumer.GROUP_NAME, id="0-0"
+            settings.consumer.STREAM_NAME,
+            settings.consumer.CONSUMER_GROUP_NAME,
+            id="0-0",
         )
     except redis.exceptions.ResponseError as e:
         if "BUSYGROUP" in str(e):
-            logger.info(f"Consumer group {settings.consumer.GROUP_NAME} already exists")
+            logger.info(
+                f"Consumer group {settings.consumer.CONSUMER_GROUP_NAME} already exists"
+            )
         else:
             raise e
 
     logger.debug(
         f"Consuming from stream: {settings.consumer.STREAM_NAME}"
-        f" as {settings.consumer.NAME}"
-        f" in group {settings.consumer.GROUP_NAME}"
+        f" as {settings.consumer.CONSUMER_NAME}"
+        f" in group {settings.consumer.CONSUMER_GROUP_NAME}"
     )
     consumer = stream_consumer.Consumer(
         client=redis_client,
         stream=settings.consumer.STREAM_NAME,
-        group=settings.consumer.GROUP_NAME,
-        name=settings.consumer.NAME,
-        batch_size=settings.consumer.MESSAGE_BATCH_SIZE,
+        group=settings.consumer.CONSUMER_GROUP_NAME,
+        name=settings.consumer.CONSUMER_NAME,
+        batch_size=settings.consumer.CONSUMER_MESSAGE_BATCH_SIZE,
         claim_batch_size=settings.consumer.CLAIM_BATCH_SIZE,
         pending_batch_size=settings.consumer.PENDING_BATCH_SIZE,
         block_milliseconds=settings.consumer.BLOCK_MILLISECONDS,
