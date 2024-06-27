@@ -44,7 +44,7 @@ def produce_message():
 def publish_message(message: Message, persistance_dependency: redis.Redis):
     logger.info(f"Publish message: {message}")
     message_id = persistance_dependency.xadd(
-        settings.STREAM_NAME, message.model_dump(mode="json")
+        settings.producer.STREAM_NAME, message.model_dump(mode="json")
     )
     persistance_dependency.set(str(message.tx_id), 0)
     return message_id
@@ -52,14 +52,14 @@ def publish_message(message: Message, persistance_dependency: redis.Redis):
 
 def main(count: int):
     redis_client = redis.Redis(
-        host=settings.REDIS_HOST,
-        port=settings.REDIS_PORT,
-        password=settings.REDIS_PASSWORD,
+        host=settings.redis.HOST,
+        port=settings.redis.PORT,
+        password=settings.redis.PASSWORD,
         decode_responses=True,
     )
     redis_client.ping()
 
-    logger.debug(f"Publish to stream: {settings.STREAM_NAME}")
+    logger.debug(f"Publish to stream: {settings.producer.STREAM_NAME}")
     for i in range(count):
         #################################################################################
         logger.info("Publish message")
