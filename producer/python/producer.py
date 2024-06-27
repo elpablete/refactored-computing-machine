@@ -1,11 +1,9 @@
 import logging
-import pathlib
 import uuid
 
 import pydantic
 import pydantic_settings
 import redis
-import rtoml
 
 
 class ProducerSettings(pydantic_settings.BaseSettings):
@@ -23,7 +21,7 @@ class RedisSettings(pydantic_settings.BaseSettings):
 class Settings(pydantic_settings.BaseSettings):
     redis: RedisSettings = RedisSettings()
     producer: ProducerSettings = ProducerSettings(
-        **rtoml.load(pathlib.Path("test.toml")).get("producer", {})
+        # **rtoml.load(pathlib.Path("test.toml")).get("producer", {})
     )
 
 
@@ -54,7 +52,7 @@ def main(count: int):
     redis_client = redis.Redis(
         host=settings.redis.HOST,
         port=settings.redis.PORT,
-        password=settings.redis.PASSWORD,
+        password=settings.redis.PASSWORD.get_secret_value(),
         decode_responses=True,
     )
     redis_client.ping()

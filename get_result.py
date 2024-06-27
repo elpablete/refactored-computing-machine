@@ -5,6 +5,8 @@ import pathlib
 import pydantic_settings
 import redis
 
+logger = logging.getLogger("get_result")
+
 
 class Settings(pydantic_settings.BaseSettings):
     REDIS_DB: int = 0
@@ -17,8 +19,6 @@ class Settings(pydantic_settings.BaseSettings):
 
 settings = Settings()
 
-logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger("KEY_GETTER")
 
 DATA_FOLDER = pathlib.Path("data")
 BATCH_SIZE = 100

@@ -1,6 +1,6 @@
 import enum
 import logging
-from typing import Any, Type, TypeVar
+from typing import Any, Generic, Iterator, Type, TypeVar
 
 import redis
 from typing_extensions import Self
@@ -15,7 +15,7 @@ class RedisSpecialId(str, enum.Enum):
     FIRST_ID_INSIDE_THE_STREAM = "0-0"
 
 
-class Consumer:
+class Consumer(Generic[T]):
     def __init__(
         self,
         client: redis.Redis,
@@ -29,7 +29,7 @@ class Consumer:
         batch_size: int | None = None,
         pending_batch_size: int | None = None,
         claim_batch_size: int | None = None,
-        min_milliseconds_to_claim_idle: int = 1_000,
+        min_milliseconds_to_claim_idle: int | None = None,
     ) -> None:
         self.client = client
         self.stream = stream
@@ -40,7 +40,8 @@ class Consumer:
         self.batch_size = batch_size
         self.pending_batch_size = pending_batch_size
         self.claim_batch_size = claim_batch_size
-        self.min_milliseconds_to_claim_idle = min_milliseconds_to_claim_idle
+        if min_milliseconds_to_claim_idle is None:
+            self.min_milliseconds_to_claim_idle = 1_000
         self.message_class = message_class
 
         # check connection
@@ -52,7 +53,7 @@ class Consumer:
             self.client.xgroup_create(
                 self.stream,
                 groupname=self.group,
-                id=0,  # start_group_since_id,
+                id=start_group_since_id,
             )
         except redis.exceptions.ResponseError as e:
             if "BUSYGROUP" in str(e):
@@ -67,9 +68,9 @@ class Consumer:
     def __str__(self) -> str:
         return (
             f"Redis Stream Consumer from host: {self.client},"
-            " stream '{self.stream}',"
-            " in consumer group '{self.group}'"
-            " as '{self.name}'"
+            f" stream '{self.stream}',"
+            f" in consumer group '{self.group}'"
+            f" as '{self.name}'"
         )
 
     def ack(self: Self, message_id: str) -> None:
@@ -89,10 +90,10 @@ class Consumer:
         else:
             return False
 
-    def consume(self) -> list[tuple[str, T]]:
+    def consume(self):
         return next(self)
 
-    def _parse_messages(self, messages: list[tuple[str, Any]]) -> list[tuple[str, T]]:
+    def _parse_messages(self, messages: list[tuple[str, T]]) -> list[tuple[str, T]]:
         if len(messages) == 0:
             return []
         if self.message_class is None:
@@ -130,7 +131,7 @@ class Consumer:
 
         return self._parse_messages(my_new_work)
 
-    def pending_messages(self: Self) -> list[tuple[str, Any]]:
+    def pending_messages(self: Self) -> list[tuple[str, T]]:
         xreadgroup_response = self.client.xreadgroup(
             groupname=self.group,
             consumername=self.name,
@@ -161,35 +162,35 @@ class Consumer:
 
         return self._parse_messages(my_pending_work)
 
-    def claimed_messages(self: Self) -> list[tuple[str, Any]]:
+    def claimed_messages(self: Self) -> list[tuple[str, T]]:
         # claim messages that are pending for than min_idle_milliseconds in this CONSUMER_GROUP
         autoclaim_response = self.client.xautoclaim(
             name=self.stream,
             groupname=self.group,
             consumername=self.name,
             min_idle_time=self.min_milliseconds_to_claim_idle,
-            start_id=RedisSpecialId.FIRST_ID_INSIDE_THE_STREAM,
+            start_id=self.latest_pending_msg_id,
             count=self.claim_batch_size,
         )
-        _, claimed_messages, _ = autoclaim_response
+        last_msg_in_pending_batch_id, claimed_messages, _ = autoclaim_response
+        self.latest_pending_msg_id = last_msg_in_pending_batch_id
 
         return self._parse_messages(claimed_messages)
 
-    def __next__(self: Self) -> list[tuple[str, T]]:
+    def __next__(self: Self) -> Iterator[list[tuple[str, T]]]:
         while True:
             #################################################################################
             ## new messages section
             #################################################################################
             logger.info("Polling for new messages")
-            while True:
-                # exhaust new messages
-                my_new_work = self.new_messages()
-                if len(my_new_work) > 0:
-                    logger.info(f"Yielding new messages: {len(my_new_work)}")
-                    yield my_new_work
-                else:
-                    logger.info("No new messages")
-                    break  # break out of the new messages loop
+            my_new_work = self.new_messages()
+            if len(my_new_work) > 0:
+                logger.info(f"Yielding new messages: {len(my_new_work)}")
+                yield my_new_work
+                continue
+            else:
+                logger.info("No new messages")
+                pass  # continue with next section
 
             #################################################################################
             ## pending messages section
@@ -197,33 +198,41 @@ class Consumer:
 
             if self.pending_batch_size is None:
                 logger.info("Skipping my pending messages")
-                my_pending_work = []
+                pass  # continue with next section
             else:
                 logger.info("Cheking for my pending messages")
                 my_pending_work = self.pending_messages()
                 if len(my_pending_work) > 0:
                     logger.info(f"Yielding my pending messages: {len(my_pending_work)}")
                     yield my_pending_work
+                    continue
                 else:
                     logger.info("No my pending messages")
+                    pass  # continue with next section
 
             #################################################################################
             ## claimed messages section
             #################################################################################
             if self.claim_batch_size is None:
                 logger.info("Skip claiming group messages")
-                claimed_messages = []
+                pass  # continue with next section
             else:
                 logger.info("Claiming pending group messages")
                 claimed_messages = self.claimed_messages()
                 if len(claimed_messages) > 0:
                     logger.info(f"Yielding claimed {len(claimed_messages)} messages")
                     yield claimed_messages
+                    continue
                 else:
                     logger.info(
                         f"No messages idle for more than {self.min_milliseconds_to_claim_idle} milliseconds"
                         f" in consumer group '{self.group}'"
                         f" of stream '{self.stream}'"
                     )
+                    pass  # continue with next section
 
+            #################################################################################
+            ## no messages section
+            #################################################################################
+            yield []
             continue
